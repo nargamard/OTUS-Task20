@@ -1,0 +1,16 @@
+---
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s8:
+      addresses:
+      - 192.168.255.5/30 
+      routes:
+      - to: 192.168.0.0/24  # Ходит в локальные сети 192.168.0.0/24 через CentralRouter (192.168.255.6)
+        via: 192.168.255.6
+      - to: 192.168.255.4   
+        via: 192.168.255.6      
+    enp0s19:              
+      addresses:
+      - 192.168.56.11/24

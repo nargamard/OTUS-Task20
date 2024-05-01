@@ -1,0 +1,157 @@
+- name: NetPlan
+  hosts: all
+  become: yes
+  tasks:
+
+# Отключим ufw везде
+  - name: stop & disable ufw
+    systemd_service:
+      name: ufw
+      state: stopped
+      enabled: false
+
+# Установим traceroute и net-tools на всех хостах
+  - name: install traceroute
+    apt:
+      name: 
+        - traceroute
+        - net-tools
+      state: present
+      update_cache: yes
+
+# Установим правила NAT на роутере inetRouter1
+  - name: Set up NAT on inetRouter
+    template: 
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      owner: root
+      group: root
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "templates/iptables_rules.ipv4_inetRouter1", dest: "/etc/iptables_rules.ipv4", mode: "0644" }
+      - { src: "templates/iptables_restore", dest: "/etc/network/if-pre-up.d/iptables", mode: "0755" }
+    when: ansible_hostname == "inetRouter1"
+
+# Установим правила NAT на роутере и inetRouter2
+  - name: Set up NAT on inetRouter
+    template: 
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      owner: root
+      group: root
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "templates/iptables_rules.ipv4_inetRouter2", dest: "/etc/iptables_rules.ipv4", mode: "0644" }
+      - { src: "templates/iptables_restore", dest: "/etc/network/if-pre-up.d/iptables", mode: "0755" }
+    when: ansible_hostname == "inetRouter2"
+
+# Включим правила iptables
+  - name: Set up NAT on inetRouter
+    shell: /sbin/iptables-restore < /etc/iptables_rules.ipv4
+    when: (ansible_hostname == "inetRouter1") or (ansible_hostname == "inetRouter2") 
+
+ # Отключим маршрут по умолчанию чтобы в инет ничего не ходило через интерфейсы для vagrant
+  - name: disable default route
+    template: 
+      src: 00-installer-config.yaml
+      dest: /etc/netplan/00-installer-config.yaml
+      owner: root
+      group: root
+      mode: 0644
+    when: (ansible_hostname == "centralServer") or (ansible_hostname == "centralRouter") # Кроме роутеров, которые смотрят в Интернет 
+
+# Включим проброс пакетов на всех роутерах
+  - name: 'allow forwarding'
+    sysctl:
+      name: net.ipv4.ip_forward
+      value: 1
+      sysctl_set: yes
+    when: (ansible_hostname != "centralServer")  # Кроме роутеров, которые смотрят в Интернет 
+
+# Установим Nginx
+  - name: install nginx
+    apt:
+      name: 
+        - nginx
+        - unzip
+      state: present
+      update_cache: yes
+    when: (ansible_hostname == "centralServer")
+
+# Включим nginx
+  - name: start and enable nginx
+    systemd:
+      name: nginx
+      state: started
+      enabled: yes
+    when: (ansible_hostname == "centralServer")    
+
+# Скопируем тестовый сайт 
+  - name: Copy app
+    copy:
+      src: html.zip
+      dest: /tmp
+    when: (ansible_hostname == "centralServer")
+
+# Разархивируем тестовый сайт и перезепустим nginx
+  - name: Unarchive an app
+    unarchive:
+      src: /tmp/html.zip
+      dest: /var/www
+      remote_src: yes 
+    when: (ansible_hostname == "centralServer")  
+    notify: restart nginx
+  
+# Разрешим подключение ssh по паролю  
+  - name: 'configure sshd'
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PasswordAuthentication'
+      line: 'PasswordAuthentication yes'
+    notify: restart sshd
+    when: (ansible_hostname == "inetRouter1") 
+
+# Установим knockd
+  - name: install knockd
+    apt:
+      name: 
+        - knockd
+      state: present
+      update_cache: yes
+    when: ( ansible_hostname == "centralRouter" ) or ( ansible_hostname == "inetRouter1" )
+    notify: restart knockd
+
+# скопируем файл конфигурации knockd
+  - name: 'configure knock server'
+    copy: src={{ item.src }} dest={{ item.dest }}
+    with_items:
+      - { src: templates/knockd.conf, dest: /etc/ }
+    notify: restart knockd
+    when: (ansible_hostname == "inetRouter1") 
+
+# скопируем файл c опциями knockd по умолчанию 
+  - name: 'configure knock server'
+    lineinfile:
+      path: /etc/default/knockd
+      line: 'KNOCKD_OPTS="-i enp0s8"'
+    when: ansible_hostname == "inetRouter1" 
+
+# Добавим маршруты
+  - name: add default gateway for all hosts
+    template: 
+      src: templates/50-vagrant_{{ansible_hostname}}.yaml
+      dest: /etc/netplan/50-vagrant.yaml
+      owner: root
+      group: root
+      mode: 0644
+
+# Перезапустим сеть на всех хостах
+  - name: restart all hosts network
+    shell: netplan apply
+
+# Перезапустим все хосты
+  - name: restart all hosts
+    reboot:
+
+  handlers:
+    - import_tasks: handlers/main.yaml

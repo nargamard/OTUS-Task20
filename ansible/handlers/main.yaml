@@ -1,0 +1,24 @@
+---
+# Перезапуск сети
+- name: restart network
+  systemd:
+    name: network
+    state: restarted
+
+# Перезапуск sshd
+- name: restart sshd
+  systemd:
+    name: sshd
+    state: restarted
+
+# Перезапуск knockd
+- name: restart knockd
+  systemd:
+    name: knockd
+    state: restarted
+
+# Перезапуск nginx
+- name: restart nginx
+  systemd:
+    name: nginx
+    state: restarted    
